@@ -26,7 +26,7 @@ dependencies = [
     "einx>=0.3.0",
     "einops>=0.8.1",
     "memmap-replay-buffer>=0.0.17",
-    "torch>=2.4",
+    "torch==2.6.0",
     "x-mlps-pytorch>=0.3.0",
     "hl-gauss-pytorch>=0.2.2",
     "discrete-continuous-embed-readout>=0.2.1",

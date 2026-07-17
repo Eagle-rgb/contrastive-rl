@@ -139,7 +139,7 @@ def main(
 
     # env
 
-    env = gym.make('LunarLander-v3', continuous = True, render_mode = 'rgb_array')
+    env = gym.make('MountainCarContinuous-v0', render_mode = 'rgb_array')
 
     # recording
 
@@ -148,19 +148,19 @@ def main(
     env = gym.wrappers.RecordVideo(
         env = env,
         video_folder = video_folder,
-        name_prefix = 'lunar',
+        name_prefix = 'mountaincar',
         episode_trigger = lambda eps_num: divisible_by(eps_num, render_every_eps),
         disable_logger = True
     )
 
-    dim_state = 8
-    dim_goal = 8 + (1 if reward_part_of_goal else 0)
-    dim_action = 2
+    dim_state = 2
+    dim_goal = 1 + (1 if reward_part_of_goal else 0)
+    dim_action = 1
 
     # replay buffer
 
     replay_buffer = ReplayBuffer(
-        './replay-lunar-continuous',
+        './replay-mountaincar-continuous',
         max_episodes = buffer_size,
         max_timesteps = max_timesteps + 1,
         fields = dict(
@@ -234,6 +234,8 @@ def main(
     else:
         contrastive_learn = ContrastiveLearning(l2norm_embed = True, learned_temp = True)
 
+    state_to_goal_fn = lambda s: s[...,0:1]
+
     critic_trainer = ContrastiveRLTrainer(
         critic_encoder,
         goal_encoder,
@@ -245,7 +247,8 @@ def main(
         reward_part_of_goal = reward_part_of_goal,
         reward_norm = reward_norm,
         cpu = cpu,
-        contrastive_learn = contrastive_learn
+        contrastive_learn = contrastive_learn,
+        state_to_goal_fn = state_to_goal_fn
     )
 
     # assertions
@@ -267,10 +270,11 @@ def main(
         reward_part_of_goal = reward_part_of_goal,
         reward_norm = reward_norm,
         cpu = cpu,
-        contrastive_learn = contrastive_learn
+        contrastive_learn = contrastive_learn,
+        state_to_goal_fn = state_to_goal_fn
     )
 
-    actor_goal = tensor([0., 0., 0., 0., 0., 0., 1., 1.], device = device)
+    actor_goal = tensor([0.45], device = device)
 
     if reward_part_of_goal:
         max_reward = tensor([1.], device = device, dtype = torch.float32)
@@ -278,13 +282,10 @@ def main(
 
     # episodes
 
-    rolling_reward = deque(maxlen = 100)
-    rolling_steps = deque(maxlen = 100)
-
     dashboard = Dashboard(
         num_episodes,
-        title = "Contrastive RL - Lunar Lander (Continuous)",
-        env_name = "LunarLanderContinuous-v3",
+        title = "Contrastive RL - MountainCar (Continuous)",
+        env_name = "MountainCarContinuous - v0",
         hyperparams = dict(
             critic_learning_rate = critic_learning_rate,
             actor_learning_rate = actor_learning_rate,
@@ -324,7 +325,10 @@ def main(
           actor_num_train_steps,
           num_episodes_before_learn,
           actor_goal,
-          use_wandb)
+          use_wandb,
+          state_to_goal_fn=state_to_goal_fn,
+          log_success=True,
+          success_predicate=lambda s: s[0] >= 0.45)
 
 # fire
 

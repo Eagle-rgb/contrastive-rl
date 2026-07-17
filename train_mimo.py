@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import os
+# Disable saving console log output in wandb.
+os.environ["WANDB_CONSOLE"] = "off"
 from fire import Fire
 from shutil import rmtree
 from collections import deque
@@ -49,6 +51,9 @@ from hl_gauss_pytorch import HLGaussLoss
 
 from dashboard import Dashboard
 
+from MIMo.mimoEnv.envs import roll_over
+from MIMo.mimoActuation.actuation import SpringDamperModel
+
 from train_util import train, exists, default, divisible_by, module_device
 
 # classes
@@ -79,15 +84,42 @@ class CriticWrapper(nn.Module):
         state_and_action = cat((state, action_probs), dim = -1)
 
         return self.encoder(state_and_action)
+    
+class MIMoFlattenDictObservationWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+
+        # get original space from dictionary.
+        assert isinstance(env.unwrapped.observation_space, gym.spaces.Dict),\
+            "The Environment must have a Dict-ObservationSpace!"
+        
+        self.space_obs = env.unwrapped.observation_space.spaces['observation']
+        self.space_vest = env.unwrapped.observation_space.spaces['vestibular']
+
+        low = np.concatenate([self.space_obs.low.flatten(),
+                              self.space_vest.low.flatten()])
+        high = np.concatenate([self.space_obs.high.flatten(),
+                               self.space_vest.high.flatten()])
+        
+        self.observation_space = gym.spaces.Box(low=low, high=high,
+                                                dtype=np.float32)
+        
+    def observation(self, obs):
+        """ This method is automatically called from the
+        internal reset() and step() functions. """
+        flat_obs = obs['observation'].flatten()
+        flat_vest = obs['vestibular'].flatten()
+
+        return np.concatenate([flat_obs, flat_vest]).astype(np.float32)
 
 # main
 
 def main(
-    num_episodes = 50_000,
+    num_episodes = 10_000,
     max_timesteps = 500,
     num_episodes_before_learn = 128,
     buffer_size = 512,
-    video_folder = './recordings',
+    video_folder = './recordings_mimo',
     render_every_eps = None,
     dim_contrastive_embed = 64,
     cl_train_steps = 2_500,
@@ -139,7 +171,25 @@ def main(
 
     # env
 
-    env = gym.make('LunarLander-v3', continuous = True, render_mode = 'rgb_array')
+    env = gym.make("MIMoRollOver-v0", actuation_model=SpringDamperModel,
+        starting_position='supine',
+        width=480, # always 480 regardless whether we render actuations or not.
+        height=480,
+        nopen=False,
+        isr=False,
+        pbrs=True,
+        render_mode='rgb_array',
+        touch_params=None,
+        achieved_goal_in_observation=False,
+        pen_factor=0.02,
+        age_physio=9,
+        age_morph=9)
+    
+    env = MIMoFlattenDictObservationWrapper(env)
+    
+    env.unwrapped.starting_position = 'prone'
+    obs_prone, _ = env.reset()
+    env.unwrapped.starting_position = 'supine'
 
     # recording
 
@@ -148,19 +198,19 @@ def main(
     env = gym.wrappers.RecordVideo(
         env = env,
         video_folder = video_folder,
-        name_prefix = 'lunar',
+        name_prefix = 'mimo_roll',
         episode_trigger = lambda eps_num: divisible_by(eps_num, render_every_eps),
         disable_logger = True
     )
 
-    dim_state = 8
-    dim_goal = 8 + (1 if reward_part_of_goal else 0)
-    dim_action = 2
+    dim_state = env.observation_space.shape[0]
+    dim_goal = dim_state + (1 if reward_part_of_goal else 0)
+    dim_action = env.action_space.shape[0]
 
     # replay buffer
 
     replay_buffer = ReplayBuffer(
-        './replay-lunar-continuous',
+        './replay-mimo',
         max_episodes = buffer_size,
         max_timesteps = max_timesteps + 1,
         fields = dict(
@@ -234,6 +284,9 @@ def main(
     else:
         contrastive_learn = ContrastiveLearning(l2norm_embed = True, learned_temp = True)
 
+    idx_vesti_acc_z = env.env.space_obs.shape[0]+2
+    #state_to_goal_fn = lambda s: s[...,idx_vesti_acc_z:idx_vesti_acc_z+1]
+
     critic_trainer = ContrastiveRLTrainer(
         critic_encoder,
         goal_encoder,
@@ -245,7 +298,8 @@ def main(
         reward_part_of_goal = reward_part_of_goal,
         reward_norm = reward_norm,
         cpu = cpu,
-        contrastive_learn = contrastive_learn
+        contrastive_learn = contrastive_learn,
+        #state_to_goal_fn=state_to_goal_fn
     )
 
     # assertions
@@ -267,10 +321,11 @@ def main(
         reward_part_of_goal = reward_part_of_goal,
         reward_norm = reward_norm,
         cpu = cpu,
-        contrastive_learn = contrastive_learn
+        contrastive_learn = contrastive_learn,
+        #state_to_goal_fn=state_to_goal_fn
     )
 
-    actor_goal = tensor([0., 0., 0., 0., 0., 0., 1., 1.], device = device)
+    actor_goal = tensor(obs_prone.astype(np.float32), device = device)
 
     if reward_part_of_goal:
         max_reward = tensor([1.], device = device, dtype = torch.float32)
@@ -278,13 +333,10 @@ def main(
 
     # episodes
 
-    rolling_reward = deque(maxlen = 100)
-    rolling_steps = deque(maxlen = 100)
-
     dashboard = Dashboard(
         num_episodes,
-        title = "Contrastive RL - Lunar Lander (Continuous)",
-        env_name = "LunarLanderContinuous-v3",
+        title = "Contrastive RL - MIMo Rolling (Continuous)",
+        env_name = "MIMoRollOver-v0",
         hyperparams = dict(
             critic_learning_rate = critic_learning_rate,
             actor_learning_rate = actor_learning_rate,
@@ -305,6 +357,7 @@ def main(
         )
     )
 
+    
     train(dashboard,
           accelerator,
           num_episodes,
@@ -324,7 +377,10 @@ def main(
           actor_num_train_steps,
           num_episodes_before_learn,
           actor_goal,
-          use_wandb)
+          use_wandb,
+          #state_to_goal_fn,
+          log_success=True,
+          success_predicate=lambda _: env.unwrapped.is_success(env.unwrapped.get_achieved_goal(), env.unwrapped.sample_goal()))
 
 # fire
 
