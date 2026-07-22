@@ -101,14 +101,17 @@ class MIMoSymmetricalRollWrapper(gym.Wrapper):
 
         for _ in range(self.num_observations):
             obs, *_ = env.step(env.action_space.sample())
-            self.prone_obs.append(obs)
+            self.prone_obs.append(self.get_vesti_obs_from_obs(obs))
 
         env.unwrapped.starting_position='supine'
         env.reset()
         
         for _ in range(self.num_observations):
             obs, *_ = env.step(env.action_space.sample())
-            self.supine_obs.append(obs)
+            self.supine_obs.append(self.get_vesti_obs_from_obs(obs))
+
+    def get_vesti_obs_from_obs(self, obs):
+        return obs[..., self.env.space_obs.shape[0]:]
 
     def reset(self, **kwargs):
         # Throw a coin and randomly choose starting position.
@@ -116,14 +119,17 @@ class MIMoSymmetricalRollWrapper(gym.Wrapper):
         idx = np.random.randint(self.num_observations)
 
         if self.env.unwrapped.starting_position == 'supine':
-            self.current_goal = self.prone_obs[idx]
+            self.current_goal = self.get_vesti_obs_from_obs(self.prone_obs[idx])
         else:
-            self.current_goal = self.supine_obs[idx]
+            self.current_goal = self.get_vesti_obs_from_obs(self.supine_obs[idx])
 
         return super().reset(**kwargs)
 
     def sample_goal(self):
         return tensor(self.current_goal.astype(np.float32), device = self.device)
+
+    def get_goal_dim(self):
+        return self.env.space_vest.shape[0]
 
 # main
 
@@ -199,10 +205,6 @@ def main(
         age_morph=9)
     
     env = MIMoFlattenDictObservationWrapper(env)
-    
-    env.unwrapped.starting_position = 'prone'
-    obs_prone, _ = env.reset()
-    env.unwrapped.starting_position = 'supine'
 
     # recording
 
@@ -217,7 +219,7 @@ def main(
     )
 
     dim_state = env.observation_space.shape[0]
-    dim_goal = dim_state + (1 if reward_part_of_goal else 0)
+    dim_goal = env.env.get_goal_dim() + (1 if reward_part_of_goal else 0)
     dim_action = env.action_space.shape[0]
 
     # replay buffer
@@ -338,11 +340,11 @@ def main(
         #state_to_goal_fn=state_to_goal_fn
     )
 
-    actor_goal = tensor(obs_prone.astype(np.float32), device = device)
+    #actor_goal = tensor(obs_prone.astype(np.float32), device = device)
 
-    if reward_part_of_goal:
-        max_reward = tensor([1.], device = device, dtype = torch.float32)
-        actor_goal = cat((actor_goal, max_reward), dim = -1)
+    #if reward_part_of_goal:
+    #    max_reward = tensor([1.], device = device, dtype = torch.float32)
+    #    actor_goal = cat((actor_goal, max_reward), dim = -1)
 
     # episodes
 
@@ -390,7 +392,7 @@ def main(
           actor_num_train_steps,
           num_episodes_before_learn,
           use_wandb,
-          #state_to_goal_fn,
+          state_to_goal_fn=lambda s: env.env.get_vesti_obs_from_obs(s),
           log_success=True,
           success_predicate=lambda _: env.unwrapped.is_success(env.unwrapped.get_achieved_goal(), env.unwrapped.sample_goal()))
 
