@@ -119,9 +119,9 @@ class MIMoSymmetricalRollWrapper(gym.Wrapper):
         idx = np.random.randint(self.num_observations)
 
         if self.env.unwrapped.starting_position == 'supine':
-            self.current_goal = self.get_vesti_obs_from_obs(self.prone_obs[idx])
+            self.current_goal = self.prone_obs[idx]
         else:
-            self.current_goal = self.get_vesti_obs_from_obs(self.supine_obs[idx])
+            self.current_goal = self.supine_obs[idx]
 
         return super().reset(**kwargs)
 
