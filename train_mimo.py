@@ -111,7 +111,7 @@ class MIMoSymmetricalRollWrapper(gym.Wrapper):
             self.supine_obs.append(self.get_vesti_obs_from_obs(obs))
 
     def get_vesti_obs_from_obs(self, obs):
-        return obs[..., self.env.space_obs.shape[0]:]
+        return obs[..., self.env.env.space_obs.shape[0]:]
 
     def reset(self, **kwargs):
         # Throw a coin and randomly choose starting position.
