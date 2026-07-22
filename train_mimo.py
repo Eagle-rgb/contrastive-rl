@@ -206,6 +206,10 @@ def main(
     
     env = MIMoFlattenDictObservationWrapper(env)
 
+    device = accelerator.device
+
+    env = MIMoSymmetricalRollWrapper(env, device)
+
     # recording
 
     render_every_eps = default(render_every_eps, num_episodes_before_learn)
@@ -238,8 +242,6 @@ def main(
     )
 
     # model
-
-    device = accelerator.device
 
     if use_attn_residual_mlp:
         MLP = AttnResidualNormedMLP
@@ -299,8 +301,7 @@ def main(
     else:
         contrastive_learn = ContrastiveLearning(l2norm_embed = True, learned_temp = True)
 
-    idx_vesti_acc_z = env.env.space_obs.shape[0]+2
-    #state_to_goal_fn = lambda s: s[...,idx_vesti_acc_z:idx_vesti_acc_z+1]
+    state_to_goal_fn = lambda s: env.env.get_vesti_obs_from_obs(s)
 
     critic_trainer = ContrastiveRLTrainer(
         critic_encoder,
@@ -314,7 +315,7 @@ def main(
         reward_norm = reward_norm,
         cpu = cpu,
         contrastive_learn = contrastive_learn,
-        #state_to_goal_fn=state_to_goal_fn
+        state_to_goal_fn=state_to_goal_fn
     )
 
     # assertions
@@ -337,7 +338,7 @@ def main(
         reward_norm = reward_norm,
         cpu = cpu,
         contrastive_learn = contrastive_learn,
-        #state_to_goal_fn=state_to_goal_fn
+        state_to_goal_fn=state_to_goal_fn
     )
 
     #actor_goal = tensor(obs_prone.astype(np.float32), device = device)
@@ -376,7 +377,7 @@ def main(
     train(dashboard,
           accelerator,
           num_episodes,
-          MIMoSymmetricalRollWrapper(env, device),
+          env,
           exploration_random_goal_prob,
           replay_buffer,
           exploration_sample_from_buffer_prob,
@@ -392,7 +393,7 @@ def main(
           actor_num_train_steps,
           num_episodes_before_learn,
           use_wandb,
-          state_to_goal_fn=lambda s: env.env.get_vesti_obs_from_obs(s),
+          state_to_goal_fn=state_to_goal_fn,
           log_success=True,
           success_predicate=lambda _: env.unwrapped.is_success(env.unwrapped.get_achieved_goal(), env.unwrapped.sample_goal()))
 
