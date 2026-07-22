@@ -208,8 +208,6 @@ def main(
 
     device = accelerator.device
 
-    env = MIMoSymmetricalRollWrapper(env, device)
-
     # recording
 
     render_every_eps = default(render_every_eps, num_episodes_before_learn)
@@ -222,8 +220,10 @@ def main(
         disable_logger = True
     )
 
+    env = MIMoSymmetricalRollWrapper(env, device)
+
     dim_state = env.observation_space.shape[0]
-    dim_goal = env.env.get_goal_dim() + (1 if reward_part_of_goal else 0)
+    dim_goal = env.get_goal_dim() + (1 if reward_part_of_goal else 0)
     dim_action = env.action_space.shape[0]
 
     # replay buffer
@@ -301,7 +301,7 @@ def main(
     else:
         contrastive_learn = ContrastiveLearning(l2norm_embed = True, learned_temp = True)
 
-    state_to_goal_fn = lambda s: env.env.get_vesti_obs_from_obs(s)
+    state_to_goal_fn = lambda s: env.get_vesti_obs_from_obs(s)
 
     critic_trainer = ContrastiveRLTrainer(
         critic_encoder,
