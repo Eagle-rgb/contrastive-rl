@@ -54,36 +54,7 @@ from dashboard import Dashboard
 from MIMo.mimoEnv.envs import roll_over
 from MIMo.mimoActuation.actuation import SpringDamperModel
 
-from train_util import train, exists, default, divisible_by, module_device
-
-# classes
-
-class CriticWrapper(nn.Module):
-    def __init__(
-        self,
-        encoder: nn.Module,
-        hl_gauss: nn.Module | None,
-        dim_action: int
-    ):
-        super().__init__()
-        self.encoder = encoder
-        self.hl_gauss = hl_gauss
-        self.dim_action = dim_action
-
-    def forward(self, state_and_action):
-        if not exists(self.hl_gauss):
-            return self.encoder(state_and_action)
-
-        dim_action = self.dim_action
-
-        state, action = state_and_action[..., :-dim_action], state_and_action[..., -dim_action:]
-
-        action_probs = self.hl_gauss.transform_to_probs(action)
-        action_probs = rearrange(action_probs, '... a bins -> ... (a bins)')
-
-        state_and_action = cat((state, action_probs), dim = -1)
-
-        return self.encoder(state_and_action)
+from train_util import train, exists, default, divisible_by, module_device, CriticWrapper
     
 class MIMoFlattenDictObservationWrapper(gym.ObservationWrapper):
     def __init__(self, env):
@@ -111,6 +82,48 @@ class MIMoFlattenDictObservationWrapper(gym.ObservationWrapper):
         flat_vest = obs['vestibular'].flatten()
 
         return np.concatenate([flat_obs, flat_vest]).astype(np.float32)
+
+class MIMoSymmetricalRollWrapper(gym.Wrapper):
+    def __init__(self, env, device):
+        super().__init__(env)
+
+        self.device=device
+        self.num_observations=50
+        self.supine_obs = []
+        self.prone_obs = []
+        self.current_goal = None
+
+        # Collect goal observations in prone and supine by white noise
+        # random motor babbling (potentially, do pink noise motor
+        # babbling)
+        env.unwrapped.starting_position='prone'
+        env.reset()
+
+        for _ in range(self.num_observations):
+            obs, *_ = env.step(env.action_space.sample())
+            self.prone_obs.append(obs)
+
+        env.unwrapped.starting_position='supine'
+        env.reset()
+        
+        for _ in range(self.num_observations):
+            obs, *_ = env.step(env.action_space.sample())
+            self.supine_obs.append(obs)
+
+    def reset(self, **kwargs):
+        # Throw a coin and randomly choose starting position.
+        self.env.unwrapped.starting_position = np.random.choice(['supine', 'prone'])
+        idx = np.random.randint(self.num_observations)
+
+        if self.env.unwrapped.starting_position == 'supine':
+            self.current_goal = self.prone_obs[idx]
+        else:
+            self.current_goal = self.supine_obs[idx]
+
+        return super().reset(**kwargs)
+
+    def sample_goal(self):
+        return tensor(self.current_goal.astype(np.float32), device = self.device)
 
 # main
 
@@ -361,7 +374,7 @@ def main(
     train(dashboard,
           accelerator,
           num_episodes,
-          env,
+          MIMoSymmetricalRollWrapper(env, device),
           exploration_random_goal_prob,
           replay_buffer,
           exploration_sample_from_buffer_prob,
@@ -376,7 +389,6 @@ def main(
           cl_train_steps,
           actor_num_train_steps,
           num_episodes_before_learn,
-          actor_goal,
           use_wandb,
           #state_to_goal_fn,
           log_success=True,

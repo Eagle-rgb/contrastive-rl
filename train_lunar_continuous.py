@@ -49,36 +49,7 @@ from hl_gauss_pytorch import HLGaussLoss
 
 from dashboard import Dashboard
 
-from train_util import train, exists, default, divisible_by, module_device
-
-# classes
-
-class CriticWrapper(nn.Module):
-    def __init__(
-        self,
-        encoder: nn.Module,
-        hl_gauss: nn.Module | None,
-        dim_action: int
-    ):
-        super().__init__()
-        self.encoder = encoder
-        self.hl_gauss = hl_gauss
-        self.dim_action = dim_action
-
-    def forward(self, state_and_action):
-        if not exists(self.hl_gauss):
-            return self.encoder(state_and_action)
-
-        dim_action = self.dim_action
-
-        state, action = state_and_action[..., :-dim_action], state_and_action[..., -dim_action:]
-
-        action_probs = self.hl_gauss.transform_to_probs(action)
-        action_probs = rearrange(action_probs, '... a bins -> ... (a bins)')
-
-        state_and_action = cat((state, action_probs), dim = -1)
-
-        return self.encoder(state_and_action)
+from train_util import train, exists, default, divisible_by, module_device, ConstantGoalWrapper, CriticWrapper
 
 # main
 
@@ -308,7 +279,7 @@ def main(
     train(dashboard,
           accelerator,
           num_episodes,
-          env,
+          ConstantGoalWrapper(env, actor_goal),
           exploration_random_goal_prob,
           replay_buffer,
           exploration_sample_from_buffer_prob,
@@ -323,7 +294,6 @@ def main(
           cl_train_steps,
           actor_num_train_steps,
           num_episodes_before_learn,
-          actor_goal,
           use_wandb)
 
 # fire

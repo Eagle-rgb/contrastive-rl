@@ -3,6 +3,8 @@ from collections import deque
 
 import torch
 from torch import from_numpy, cat
+import torch.nn as nn
+import gymnasium as gym
 
 from contrastive_rl_pytorch import (
     sample_random_state
@@ -23,6 +25,46 @@ def module_device(m):
 def identity(t):
     return t
 
+class CriticWrapper(nn.Module):
+    def __init__(
+        self,
+        encoder: nn.Module,
+        hl_gauss: nn.Module | None,
+        dim_action: int
+    ):
+        super().__init__()
+        self.encoder = encoder
+        self.hl_gauss = hl_gauss
+        self.dim_action = dim_action
+
+    def forward(self, state_and_action):
+        if not exists(self.hl_gauss):
+            return self.encoder(state_and_action)
+
+        dim_action = self.dim_action
+
+        state, action = state_and_action[..., :-dim_action], state_and_action[..., -dim_action:]
+
+        action_probs = self.hl_gauss.transform_to_probs(action)
+        action_probs = rearrange(action_probs, '... a bins -> ... (a bins)')
+
+        state_and_action = cat((state, action_probs), dim = -1)
+
+        return self.encoder(state_and_action)
+
+class ConstantGoalWrapper(gym.Wrapper):
+    """ Class that provides function 'sample_goal()' returning a constant goal.
+    Use this class in 'train(..)' function if you have a constant goal and your
+    environment does not already have a 'sample_goal()' function. """
+    def __init__(self, env, goal):
+        super().__init__(self, env)
+        self.goal = goal
+
+    def sample_goal(self):
+        return self.goal
+
+# training routine. 'env' must be gymnasium environment (wrapper) subclass that provides
+# a 'sample_goal()' function.
 def train(dashboard,
           accelerator,
           num_episodes,
@@ -41,7 +83,6 @@ def train(dashboard,
           cl_train_steps,
           actor_num_train_steps,
           num_episodes_before_learn,
-          actor_goal,
           use_wandb,
           state_to_goal_fn=identity,
           log_success=False,
@@ -65,7 +106,7 @@ def train(dashboard,
 
             is_exploring = torch.rand(()) < exploration_random_goal_prob
 
-            eps_goal = actor_goal
+            eps_goal = env.sample_goal()
 
             if is_exploring:
                 eps_goal = sample_random_state(
