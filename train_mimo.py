@@ -129,7 +129,7 @@ class MIMoSymmetricalRollWrapper(gym.Wrapper):
         return tensor(self.current_goal.astype(np.float32), device = self.device)
 
     def get_goal_dim(self):
-        return self.env.space_vest.shape[0]
+        return self.env.env.space_vest.shape[0]
 
 # main
 
