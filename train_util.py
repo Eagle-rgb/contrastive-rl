@@ -10,6 +10,8 @@ from contrastive_rl_pytorch import (
     sample_random_state
 )
 
+from einops import rearrange
+
 def exists(v):
     return v is not None
 
